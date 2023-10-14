@@ -1,36 +1,24 @@
-import os
+import configparser
+from pathlib import Path
 from collections import defaultdict
 
 import numpy as np
-import neptune
-from neptune.exceptions import NeptuneMissingApiTokenException
 
-NEPTUNE_API_TOKEN = os.getenv("API_TOKEN")
 
 
 class MatrixFactorization:
-    def __init__(self, latent_factors,
-                 learning_rate_cfg,
-                 num_epochs,
-                 early_stopping,
-                 patience,
-                 reg, b_reg, b_lr):
-
-        self.latent_factors = latent_factors
-        self.learning_rate_cfg = learning_rate_cfg
-        self.num_epochs = num_epochs
-        self.early_stopping = early_stopping
-        self.patience = patience
-
-        self.b_reg = b_reg  # regularization parameter for the biases
-        self.b_lr = b_lr  # learning rate for the biases
-        self.reg = reg  # regularization parameter for the latent factors
+    def __init__(self, config):
+        """
+        :param config:
+        """
+        self.cfg_train = config["TRAINING"]
+        self.cfg_train.getint("latent_factors")
 
         self.user_bias = defaultdict(lambda: 0)
         self.item_bias = defaultdict(lambda: 0)
 
-        self.lrs = MatrixFactorization.learning_rate_decay(**self.learning_rate_cfg)
-        self.no_improvement_count = 0
+        self.lrs = self.learning_rate_decay()
+        self.nic = 0  # no improvement counter
         self.best_loss = float("Inf")
         self.best_user_factors, self.best_item_factors = None, None
 
@@ -40,10 +28,12 @@ class MatrixFactorization:
         predicted += bias
         return predicted
 
+
     def init_learnable_factors(self, n_users, n_items):
-        user_factors = np.random.rand(n_users, self.latent_factors)
-        item_factors = np.random.rand(self.latent_factors, n_items)
+        user_factors = np.random.rand(n_users, self.cfg_train.getint("latent_factors"))
+        item_factors = np.random.rand(self.cfg_train.getint("latent_factors"), n_items)
         return user_factors, item_factors
+
 
     def train(self, epoch, n_users, n_items, ui_train_mat, num_ratings_train, user_factors, item_factors,
               all_items_mean):
@@ -71,15 +61,17 @@ class MatrixFactorization:
                     self.update_biases(user_idx, item_idx, error)
 
                     # update the latent factors using stochastic gradient descent with regularization
-                    for k in range(self.latent_factors):
+                    for k in range(self.cfg_train.getint("latent_factors")):
                         user_factors[user_idx, k] += self.lrs[epoch] * (
-                                error * item_factors[k, item_idx] - self.reg * user_factors[user_idx, k]
+                                error * item_factors[k, item_idx]
+                                - self.cfg_train.getfloat("l2_reg") * user_factors[user_idx, k]
                         )
                         item_factors[k, item_idx] += self.lrs[epoch] * (
-                                error * user_factors[user_idx, k] - self.reg * item_factors[k, item_idx]
+                                error * user_factors[user_idx, k]
+                                - self.cfg_train.getfloat("l2_reg") * item_factors[k, item_idx]
                         )
-
         return user_factors, item_factors, running_sse_train / num_ratings_train
+
 
     def evaluate(self, n_users, n_items, ui_val_mat, num_ratings_val, user_factors, item_factors, all_items_mean):
         """
@@ -105,11 +97,12 @@ class MatrixFactorization:
 
         return running_sse_val / num_ratings_val
 
+
     def learn(self, user_item_mat):
         assert isinstance(user_item_mat, np.ndarray), "user_item must be a numpy array"
 
         n_users, n_items = user_item_mat.shape
-        ui_train_mat, ui_val_mat = split_data(user_item_mat, train_ratio=0.8, unseen_mode="nan")
+        ui_train_mat, ui_val_mat = split(user_item_mat, train_ratio=0.8, unseen_mode="nan")
 
         num_ratings = np.sum(~np.isnan(user_item_mat))
         num_ratings_train = np.sum(~np.isnan(ui_train_mat))
@@ -118,10 +111,10 @@ class MatrixFactorization:
 
         user_factors, item_factors = self.init_learnable_factors(n_users, n_items)
         self.best_loss = float("Inf")
-        self.no_improvement_count = 0
+        self.nic = 0
 
         # Learning process
-        for epoch in range(self.num_epochs):
+        for epoch in range(self.cfg_train.getint("num_epochs")):
             user_factors, item_factors, mse_train_loss = self.train(
                 epoch, n_users, n_items, ui_train_mat, num_ratings_train, user_factors, item_factors, all_items_mean
             )
@@ -131,7 +124,8 @@ class MatrixFactorization:
             if self.can_stop(epoch, mse_val_loss, user_factors, item_factors):
                 break
 
-            print(f"Epoch: {epoch + 1}/{self.num_epochs} | Train MSE: {mse_train_loss} | Val MSE: {mse_val_loss}")
+            print(f"Epoch: {epoch + 1}/{self.cfg_train.getint('num_epochs')} | Train MSE: {mse_train_loss} | Val MSE: {mse_val_loss}")
+
 
     def can_stop(self, epoch, mse_val_loss, user_factors, item_factors):
         """
@@ -142,37 +136,44 @@ class MatrixFactorization:
         :param item_factors:
         :return: True if the model can stop learning, False otherwise
         """
-        if mse_val_loss < self.best_loss and epoch > (self.num_epochs * 0.1):
+        if mse_val_loss < self.best_loss and epoch > (self.cfg_train.getint("num_epochs") * 0.1):
             self.best_loss = mse_val_loss
             self.best_user_factors = user_factors
             self.best_item_factors = item_factors
-            self.no_improvement_count = 0
+            self.nic = 0  # no improvement counter
         else:
-            if epoch > (self.num_epochs * 0.1):
-                self.no_improvement_count += 1
-
-        if self.early_stopping and (self.no_improvement_count >= self.patience):
+            if epoch > (self.cfg_train.getint("num_epochs") * 0.1):
+                self.nic += 1
+        
+        if self.cfg_train.getboolean("early_stopping") and (self.nic >= self.cfg_train.getint("patience")):
             return True
         return False
 
-    def update_biases(self, user_idx, item_idx, error):
-        self.user_bias[user_idx] += self.b_lr * (error - self.b_reg * self.user_bias[user_idx])
-        self.item_bias[item_idx] += self.b_lr * (error - self.b_reg * self.item_bias[item_idx])
 
-    @staticmethod
-    def learning_rate_decay(starting_lr, min_lr, decay_rate, iterations):
+    def update_biases(self, user_idx, item_idx, error):
+        self.user_bias[user_idx] += self.cfg_train.getfloat("bias_lr") \
+                                    * (error - self.cfg_train.getfloat("bias_reg") * self.user_bias[user_idx])
+        self.item_bias[item_idx] += self.cfg_train.getfloat("bias_lr") \
+                                    * (error - self.cfg_train.getfloat("bias_reg") * self.item_bias[item_idx])
+
+
+    def learning_rate_decay(self):
         learning_rates = []
-        for epoch in range(iterations):
-            lr = min_lr + (starting_lr - min_lr) * np.exp(-decay_rate * epoch)
+        for epoch in range(self.cfg_train.getint("num_epochs")):
+            lr = self.cfg_train.getfloat("end_lr") \
+                 + (self.cfg_train.getfloat("start_lr") - self.cfg_train.getfloat("end_lr")) \
+                 * np.exp(-self.cfg_train.getfloat("decay_rate") * epoch)
+
             learning_rates.append(lr)
         return learning_rates
 
 
 
-def split_data(matrix, train_ratio, unseen_mode="zero", seed=42):
-
+def split(matrix, train_ratio, unseen_mode="zero", seed=42):
     assert isinstance(matrix, np.ndarray), "matrix must be a numpy array"
     assert unseen_mode in ["zero", "nan"], "unseen_mode must be 'zero' or 'nan', got {unseen_mode} instead"
+
+    np.random.seed(seed)
 
     train_matrix = np.zeros_like(matrix) if unseen_mode == "zero" else np.nan * np.zeros_like(matrix)
     test_matrix = np.zeros_like(matrix) if unseen_mode == "zero" else np.nan * np.zeros_like(matrix)
@@ -190,5 +191,16 @@ def split_data(matrix, train_ratio, unseen_mode="zero", seed=42):
     return train_matrix, test_matrix
 
 
+def load_numpy_matrix(path):
+    assert isinstance(path, Path), "path must be a pathlib.Path object"
+    assert path.exists(), f"path {path} does not exist"
+    return np.load(path)
+
+
 if __name__ == "__main__":
-    pass
+    config = configparser.ConfigParser(inline_comment_prefixes="#")
+    config.read(Path(__file__).parent.parent / "config.ini")
+
+    ui_mat = load_numpy_matrix(Path(__file__).parent.parent / "data" / "ui_mat.npy")
+    mf = MatrixFactorization(config)
+    mf.learn(ui_mat)
