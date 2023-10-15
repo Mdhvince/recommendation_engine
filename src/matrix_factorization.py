@@ -68,26 +68,25 @@ class MatrixFactorization:
         :return: updated user_factors, item_factors, mse train loss
         """
         running_sse_train = 0
-        for user_idx in range(self.n_users):
-            for item_idx in range(self.n_items):
-                actual_rating = self.train_mat[user_idx, item_idx]
+        for user_index in range(self.n_users):
+            for item_index in range(self.n_items):
+                actual_rating = self.train_mat[user_index, item_index]
+                if np.isnan(actual_rating): continue
+                predicted_rating = self.predict(user_index, item_index)
+                error = actual_rating - predicted_rating
+                running_sse_train += error ** 2
+                self.update_biases(user_index, item_index, error)
 
-                if not np.isnan(actual_rating):
-                    predicted_rating = self.predict(user_idx, item_idx)
-                    error = actual_rating - predicted_rating
-                    running_sse_train += error ** 2
-                    self.update_biases(user_idx, item_idx, error)
-
-                    # update the latent factors using stochastic gradient descent with regularization
-                    for k in range(self.cfg_train.getint("latent_factors")):
-                        self.user_factors[user_idx, k] += self.lrs[epoch] * (
-                                error * self.item_factors[k, item_idx]
-                                - self.cfg_train.getfloat("l2_reg") * self.user_factors[user_idx, k]
-                        )
-                        self.item_factors[k, item_idx] += self.lrs[epoch] * (
-                                error * self.user_factors[user_idx, k]
-                                - self.cfg_train.getfloat("l2_reg") * self.item_factors[k, item_idx]
-                        )
+                # update the latent factors using stochastic gradient descent with regularization
+                for k in range(self.cfg_train.getint("latent_factors")):
+                    self.user_factors[user_index, k] += self.lrs[epoch] * (
+                            error * self.item_factors[k, item_index]
+                            - self.cfg_train.getfloat("l2_reg") * self.user_factors[user_index, k]
+                    )
+                    self.item_factors[k, item_index] += self.lrs[epoch] * (
+                            error * self.user_factors[user_index, k]
+                            - self.cfg_train.getfloat("l2_reg") * self.item_factors[k, item_index]
+                    )
         return running_sse_train / self.n_train_ratings
 
 
@@ -98,13 +97,13 @@ class MatrixFactorization:
         """
         running_sse_val = 0
 
-        for user_idx in range(self.n_users):
-            for item_idx in range(self.n_items):
-                actual_rating = self.val_mat[user_idx, item_idx]
-                if not np.isnan(actual_rating):
-                    predicted_rating = self.predict(user_idx, item_idx)
-                    error = actual_rating - predicted_rating
-                    running_sse_val += error ** 2
+        for user_index in range(self.n_users):
+            for item_index in range(self.n_items):
+                actual_rating = self.val_mat[user_index, item_index]
+                if np.isnan(actual_rating): continue
+                predicted_rating = self.predict(user_index, item_index)
+                error = actual_rating - predicted_rating
+                running_sse_val += error ** 2
 
         return running_sse_val / self.n_val_ratings
 
@@ -145,11 +144,11 @@ class MatrixFactorization:
         return False
 
 
-    def update_biases(self, user_idx, item_idx, error):
-        self.user_bias[user_idx] += self.cfg_train.getfloat("bias_lr") \
-                                    * (error - self.cfg_train.getfloat("bias_reg") * self.user_bias[user_idx])
-        self.item_bias[item_idx] += self.cfg_train.getfloat("bias_lr") \
-                                    * (error - self.cfg_train.getfloat("bias_reg") * self.item_bias[item_idx])
+    def update_biases(self, user_index, item_index, error):
+        self.user_bias[user_index] += self.cfg_train.getfloat("bias_lr") \
+                                    * (error - self.cfg_train.getfloat("bias_reg") * self.user_bias[user_index])
+        self.item_bias[item_index] += self.cfg_train.getfloat("bias_lr") \
+                                    * (error - self.cfg_train.getfloat("bias_reg") * self.item_bias[item_index])
 
 
     def learning_rate_decay(self):
@@ -187,15 +186,15 @@ class MatrixFactorization:
         train_matrix = np.zeros_like(matrix) if unseen_mode == "zero" else np.nan * np.zeros_like(matrix)
         test_matrix = np.zeros_like(matrix) if unseen_mode == "zero" else np.nan * np.zeros_like(matrix)
 
-        for user_idx in range(matrix.shape[0]):
-            user_row = matrix[user_idx, :]
+        for user_index in range(matrix.shape[0]):
+            user_row = matrix[user_index, :]
             rated_indices = np.where(user_row != 0)[0] if unseen_mode == "zero" else np.where(~np.isnan(user_row))[0]
             n_rated = len(rated_indices)
             train_size = int(n_rated * train_ratio)
             train_indices = np.random.choice(rated_indices, size=train_size, replace=False)
             test_indices = np.setdiff1d(rated_indices, train_indices)
-            train_matrix[user_idx, train_indices] = user_row[train_indices]
-            test_matrix[user_idx, test_indices] = user_row[test_indices]
+            train_matrix[user_index, train_indices] = user_row[train_indices]
+            test_matrix[user_index, test_indices] = user_row[test_indices]
 
         return train_matrix, test_matrix
 
@@ -213,3 +212,5 @@ if __name__ == "__main__":
 
     mf = MatrixFactorization(config)
     mf.learn()
+
+
