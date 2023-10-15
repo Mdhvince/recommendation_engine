@@ -21,19 +21,3 @@ def test_split(rating_mat_nan, rating_mat_zero, unseen_mode):
     non_nan_idx_val = np.argwhere(~np.isnan(val_mat)) if unseen_mode == "nan" else np.argwhere(val_mat != 0)
     intersection = set(tuple(row) for row in non_nan_idx_train) & set(tuple(row) for row in non_nan_idx_val)
     assert len(intersection) == 0
-
-
-# def test_get_matrices_info(mf, rating_mat_nan):
-#     # Arrange
-#     mf.unseen_mode_nan = True
-
-
-
-
-
-
-
-
-
-
-
