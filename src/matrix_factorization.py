@@ -13,6 +13,7 @@ class MatrixFactorization:
         self.cfg_dft = config["DEFAULT"]
         self.cfg_train = config["TRAINING"]
         self.cfg_train.getint("latent_factors")
+        self.unseen_mode_nan = self.cfg_dft.get("unseen_mode") == "nan"
 
         self.ratings_mat, self.train_mat, self.val_mat = self.init_matrices()
         self.n_users, self.n_items, self.n_train_ratings, self.n_val_ratings, self.ratings_avg = self.get_matrices_info()
@@ -33,27 +34,37 @@ class MatrixFactorization:
         assert isinstance(ratings_mat, np.ndarray), "user_item must be a numpy array"
 
         train_mat, val_mat = MatrixFactorization.split(
-            ratings_mat, train_ratio=self.cfg_train.getfloat("train_ratio"), unseen_mode="nan"
+            ratings_mat,
+            train_ratio=self.cfg_train.getfloat("train_ratio"),
+            unseen_mode=self.cfg_dft.get("unseen_mode")
         )
         return ratings_mat, train_mat, val_mat
 
 
     def get_matrices_info(self):
         n_users, n_items = self.ratings_mat.shape
-        num_ratings = np.sum(~np.isnan(self.ratings_mat))
-        num_ratings_train = np.sum(~np.isnan(self.train_mat))
-        num_ratings_val = np.sum(~np.isnan(self.val_mat))
-        mean_ratings = np.sum(~np.isnan(self.ratings_mat)) / num_ratings
-        return n_users, n_items, num_ratings_train, num_ratings_val, mean_ratings
+        seen_data = ~np.isnan(self.ratings_mat) if self.unseen_mode_nan else self.ratings_mat != 0
+        seen_train = ~np.isnan(self.train_mat) if self.unseen_mode_nan else self.train_mat != 0
+        seen_val = ~np.isnan(self.val_mat) if self.unseen_mode_nan else self.val_mat != 0
+
+        # count the number of ratings and the average rating
+        n_ratings = np.sum(seen_data)
+        n_ratings_train = np.sum(seen_train)
+        n_ratings_val = np.sum(seen_val)
+        mean_ratings = np.sum(np.where(np.isnan(self.ratings_mat), 0., self.ratings_mat)) / n_ratings
+        return n_users, n_items, n_ratings_train, n_ratings_val, mean_ratings
 
 
-    def user_item_pairs_gen(self):
+    def interactions_gen(self, rating_mat):
         """
-        Generator to iterate over all user-item pairs.
+        Generator to iterate over user-item interactions
         """
         for user_index in range(self.n_users):
             for item_index in range(self.n_items):
-                yield user_index, item_index
+                actual_rating = rating_mat[user_index, item_index]
+                is_unseen = np.isnan(actual_rating) if self.unseen_mode_nan else actual_rating == 0
+                if is_unseen: continue
+                yield user_index, item_index, actual_rating
 
 
     def predict(self, u_idx, i_idx):
@@ -77,9 +88,7 @@ class MatrixFactorization:
         """
         running_sse_train = 0
 
-        for user_index, item_index in self.user_item_pairs_gen():
-            actual_rating = self.train_mat[user_index, item_index]
-            if np.isnan(actual_rating): continue
+        for user_index, item_index, actual_rating in self.interactions_gen(self.train_mat):
             predicted_rating = self.predict(user_index, item_index)
             error = actual_rating - predicted_rating
             running_sse_train += error ** 2
@@ -105,9 +114,7 @@ class MatrixFactorization:
         """
         running_sse_val = 0
 
-        for user_index, item_index in self.user_item_pairs_gen():
-            actual_rating = self.val_mat[user_index, item_index]
-            if np.isnan(actual_rating): continue
+        for user_index, item_index, actual_rating in self.interactions_gen(self.val_mat):
             predicted_rating = self.predict(user_index, item_index)
             error = actual_rating - predicted_rating
             running_sse_val += error ** 2
