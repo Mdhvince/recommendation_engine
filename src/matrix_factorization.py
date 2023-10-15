@@ -5,7 +5,6 @@ from collections import defaultdict
 import numpy as np
 
 
-
 class MatrixFactorization:
     def __init__(self, config):
         """
@@ -48,6 +47,15 @@ class MatrixFactorization:
         return n_users, n_items, num_ratings_train, num_ratings_val, mean_ratings
 
 
+    def user_item_pairs_gen(self):
+        """
+        Generator to iterate over all user-item pairs.
+        """
+        for user_index in range(self.n_users):
+            for item_index in range(self.n_items):
+                yield user_index, item_index
+
+
     def predict(self, u_idx, i_idx):
         predicted = np.dot(self.user_factors[u_idx, :], self.item_factors[:, i_idx])
         bias = self.ratings_avg + self.user_bias[u_idx] + self.item_bias[i_idx]
@@ -68,25 +76,25 @@ class MatrixFactorization:
         :return: updated user_factors, item_factors, mse train loss
         """
         running_sse_train = 0
-        for user_index in range(self.n_users):
-            for item_index in range(self.n_items):
-                actual_rating = self.train_mat[user_index, item_index]
-                if np.isnan(actual_rating): continue
-                predicted_rating = self.predict(user_index, item_index)
-                error = actual_rating - predicted_rating
-                running_sse_train += error ** 2
-                self.update_biases(user_index, item_index, error)
 
-                # update the latent factors using stochastic gradient descent with regularization
-                for k in range(self.cfg_train.getint("latent_factors")):
-                    self.user_factors[user_index, k] += self.lrs[epoch] * (
-                            error * self.item_factors[k, item_index]
-                            - self.cfg_train.getfloat("l2_reg") * self.user_factors[user_index, k]
-                    )
-                    self.item_factors[k, item_index] += self.lrs[epoch] * (
-                            error * self.user_factors[user_index, k]
-                            - self.cfg_train.getfloat("l2_reg") * self.item_factors[k, item_index]
-                    )
+        for user_index, item_index in self.user_item_pairs_gen():
+            actual_rating = self.train_mat[user_index, item_index]
+            if np.isnan(actual_rating): continue
+            predicted_rating = self.predict(user_index, item_index)
+            error = actual_rating - predicted_rating
+            running_sse_train += error ** 2
+            self.update_biases(user_index, item_index, error)
+
+            # update the latent factors using stochastic gradient descent with regularization
+            for k in range(self.cfg_train.getint("latent_factors")):
+                self.user_factors[user_index, k] += self.lrs[epoch] * (
+                        error * self.item_factors[k, item_index]
+                        - self.cfg_train.getfloat("l2_reg") * self.user_factors[user_index, k]
+                )
+                self.item_factors[k, item_index] += self.lrs[epoch] * (
+                        error * self.user_factors[user_index, k]
+                        - self.cfg_train.getfloat("l2_reg") * self.item_factors[k, item_index]
+                )
         return running_sse_train / self.n_train_ratings
 
 
@@ -97,13 +105,12 @@ class MatrixFactorization:
         """
         running_sse_val = 0
 
-        for user_index in range(self.n_users):
-            for item_index in range(self.n_items):
-                actual_rating = self.val_mat[user_index, item_index]
-                if np.isnan(actual_rating): continue
-                predicted_rating = self.predict(user_index, item_index)
-                error = actual_rating - predicted_rating
-                running_sse_val += error ** 2
+        for user_index, item_index in self.user_item_pairs_gen():
+            actual_rating = self.val_mat[user_index, item_index]
+            if np.isnan(actual_rating): continue
+            predicted_rating = self.predict(user_index, item_index)
+            error = actual_rating - predicted_rating
+            running_sse_val += error ** 2
 
         return running_sse_val / self.n_val_ratings
 
@@ -204,6 +211,7 @@ class MatrixFactorization:
         assert isinstance(path, Path), "path must be a pathlib.Path object"
         assert path.exists(), f"path {path} does not exist"
         return np.load(path)
+
 
 
 if __name__ == "__main__":
