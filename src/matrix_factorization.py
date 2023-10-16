@@ -14,6 +14,7 @@ class MatrixFactorization:
         self.cfg_train = config["TRAINING"]
         self.cfg_train.getint("latent_factors")
         self.unseen_mode_nan = self.cfg_dft.get("unseen_mode") == "nan"
+        self.min_rating, self.max_rating = self.cfg_dft.getfloat("min_rating"), self.cfg_dft.getfloat("max_rating")
 
         self.ratings_mat, self.train_mat, self.val_mat = self.init_matrices()
         self.n_users, self.n_items, self.n_train_ratings, self.n_val_ratings, self.ratings_avg = self.get_matrices_info()
@@ -39,6 +40,12 @@ class MatrixFactorization:
             unseen_mode=self.cfg_dft.get("unseen_mode")
         )
         return ratings_mat, train_mat, val_mat
+
+
+    def init_learnable_factors(self):
+        user_factors = np.random.rand(self.n_users, self.cfg_train.getint("latent_factors"))
+        item_factors = np.random.rand(self.cfg_train.getint("latent_factors"), self.n_items)
+        return user_factors, item_factors
 
 
     def get_matrices_info(self):
@@ -71,13 +78,8 @@ class MatrixFactorization:
         predicted = np.dot(self.user_factors[u_idx, :], self.item_factors[:, i_idx])
         bias = self.ratings_avg + self.user_bias[u_idx] + self.item_bias[i_idx]
         predicted += bias
+        # predicted = np.clip(predicted, self.min_rating, self.max_rating)
         return predicted
-
-
-    def init_learnable_factors(self):
-        user_factors = np.random.rand(self.n_users, self.cfg_train.getint("latent_factors"))
-        item_factors = np.random.rand(self.cfg_train.getint("latent_factors"), self.n_items)
-        return user_factors, item_factors
 
 
     def train(self, epoch):
@@ -134,7 +136,10 @@ class MatrixFactorization:
 
 
     def log(self, epoch, mse_train, mse_val):
-        print(f"Epoch: {epoch + 1}/{self.cfg_train.getint('num_epochs')} | Train MSE: {mse_train} | Val MSE: {mse_val}")
+        print(
+            f"Epoch: {epoch + 1}/{self.cfg_train.getint('num_epochs')} "
+            f"| Train RMSE: {np.sqrt(mse_train)} | Val RMSE: {np.sqrt(mse_val)}"
+        )
 
 
     def can_stop(self, epoch, mse_val):
