@@ -17,7 +17,7 @@ class MatrixFactorization:
         self.min_rating, self.max_rating = self.cfg_dft.getfloat("min_rating"), self.cfg_dft.getfloat("max_rating")
 
         self.ratings_mat, self.train_mat, self.val_mat = self.init_matrices()
-        self.n_users, self.n_items, self.n_train_ratings, self.n_val_ratings, self.ratings_avg = self.get_matrices_info()
+        self.n_users, self.n_items, self.n_train_ratings, self.n_val_ratings, self.ratings_avg = self.matrices_info()
         self.user_factors, self.item_factors = self.init_learnable_factors()
         self.lrs = self.learning_rate_decay()
 
@@ -48,7 +48,7 @@ class MatrixFactorization:
         return user_factors, item_factors
 
 
-    def get_matrices_info(self):
+    def matrices_info(self):
         n_users, n_items = self.ratings_mat.shape
         seen_data = ~np.isnan(self.ratings_mat) if self.unseen_mode_nan else self.ratings_mat != 0
         seen_train = ~np.isnan(self.train_mat) if self.unseen_mode_nan else self.train_mat != 0
