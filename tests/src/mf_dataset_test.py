@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 
-from src.mf_dataset import MFDataset
+from src.dl.mf_dataset import MFDataset
 from tests.conftest import rating_mat_nan, rating_mat_zero
 
 
