@@ -2,7 +2,9 @@ import configparser
 from pathlib import Path
 from collections import defaultdict
 
+import torch
 import numpy as np
+
 
 
 class MatrixFactorization:
@@ -10,11 +12,12 @@ class MatrixFactorization:
         """
         :param config: config object
         """
-        self.cfg_dft = config["DEFAULT"]
+        self.cfg_data = config["DATA"]
         self.cfg_train = config["TRAINING"]
         self.cfg_train.getint("latent_factors")
-        self.unseen_mode_nan = self.cfg_dft.get("unseen_mode") == "nan"
-        self.min_rating, self.max_rating = self.cfg_dft.getfloat("min_rating"), self.cfg_dft.getfloat("max_rating")
+        self.unseen_mode_nan = self.cfg_data.get("unseen_mode") == "nan"
+        self.min_rating, self.max_rating = self.cfg_data.getfloat("min_rating"), self.cfg_data.getfloat("max_rating")
+        self.l2 = self.cfg_train.getfloat("l2_reg")
 
         self.ratings_mat, self.train_mat, self.val_mat = self.init_matrices()
         self.n_users, self.n_items, self.n_train_ratings, self.n_val_ratings, self.ratings_avg = self.matrices_info()
@@ -30,14 +33,14 @@ class MatrixFactorization:
 
     def init_matrices(self):
         root_dir = Path(__file__).parent.parent
-        ratings_file = Path(self.cfg_dft.get("data_dirname")) / self.cfg_dft.get("ratings_filename")
+        ratings_file = Path(self.cfg_data.get("data_dirname")) / self.cfg_data.get("ratings_filename")
         ratings_mat = MatrixFactorization.load_ratings_matrix(root_dir / ratings_file)
         assert isinstance(ratings_mat, np.ndarray), "user_item must be a numpy array"
 
         train_mat, val_mat = MatrixFactorization.split(
             ratings_mat,
-            train_ratio=self.cfg_train.getfloat("train_ratio"),
-            unseen_mode=self.cfg_dft.get("unseen_mode")
+            train_ratio=self.cfg_data.getfloat("train_ratio"),
+            unseen_mode=self.cfg_data.get("unseen_mode")
         )
         return ratings_mat, train_mat, val_mat
 
@@ -62,7 +65,7 @@ class MatrixFactorization:
         return n_users, n_items, n_ratings_train, n_ratings_val, mean_ratings
 
 
-    def interactions_gen(self, rating_mat):
+    def results_generator(self, rating_mat):
         """
         Generator to iterate over user-item interactions
         """
@@ -71,7 +74,9 @@ class MatrixFactorization:
                 actual_rating = rating_mat[user_index, item_index]
                 is_unseen = np.isnan(actual_rating) if self.unseen_mode_nan else actual_rating == 0
                 if is_unseen: continue
-                yield user_index, item_index, actual_rating
+                predicted_rating = self.predict(user_index, item_index)
+                error = actual_rating - predicted_rating
+                yield user_index, item_index, actual_rating, predicted_rating, error
 
 
     def predict(self, u_idx, i_idx):
@@ -82,6 +87,30 @@ class MatrixFactorization:
         return predicted
 
 
+    def optimize(self, epoch, user_index, item_index, error):
+        """
+        Update the user and item factors using SGD
+        :param epoch:
+        :param user_index:
+        :param item_index:
+        :param error:
+        :return:
+        """
+        momentum = .9
+        user_factors_momentum = 0
+        item_factors_momentum = 0
+
+        for k in range(self.cfg_train.getint("latent_factors")):
+            user_factor_gradient = error * self.item_factors[k, item_index] - self.l2 * self.user_factors[user_index, k]
+            item_factor_gradient = error * self.user_factors[user_index, k] - self.l2 * self.item_factors[k, item_index]
+
+            user_factors_momentum = momentum * user_factors_momentum + self.lrs[epoch] * user_factor_gradient
+            item_factors_momentum = momentum * item_factors_momentum + self.lrs[epoch] * item_factor_gradient
+
+            self.user_factors[user_index, k] += user_factors_momentum
+            self.item_factors[k, item_index] += item_factors_momentum
+
+
     def train(self, epoch):
         """
         Learn the latent factors and biases using SGD
@@ -89,23 +118,12 @@ class MatrixFactorization:
         :return: updated user_factors, item_factors, mse train loss
         """
         running_sse_train = 0
-
-        for user_index, item_index, actual_rating in self.interactions_gen(self.train_mat):
-            predicted_rating = self.predict(user_index, item_index)
-            error = actual_rating - predicted_rating
+        for results in self.results_generator(self.train_mat):
+            user_index, item_index, actual_rating, predicted_rating, error = results
             running_sse_train += error ** 2
             self.update_biases(user_index, item_index, error)
+            self.optimize(epoch, user_index, item_index, error)
 
-            # update the latent factors using stochastic gradient descent with regularization
-            for k in range(self.cfg_train.getint("latent_factors")):
-                self.user_factors[user_index, k] += self.lrs[epoch] * (
-                        error * self.item_factors[k, item_index]
-                        - self.cfg_train.getfloat("l2_reg") * self.user_factors[user_index, k]
-                )
-                self.item_factors[k, item_index] += self.lrs[epoch] * (
-                        error * self.user_factors[user_index, k]
-                        - self.cfg_train.getfloat("l2_reg") * self.item_factors[k, item_index]
-                )
         return running_sse_train / self.n_train_ratings
 
 
@@ -115,10 +133,8 @@ class MatrixFactorization:
         :return: mse val loss
         """
         running_sse_val = 0
-
-        for user_index, item_index, actual_rating in self.interactions_gen(self.val_mat):
-            predicted_rating = self.predict(user_index, item_index)
-            error = actual_rating - predicted_rating
+        for results in self.results_generator(self.val_mat):
+            user_index, item_index, actual_rating, predicted_rating, error = results
             running_sse_val += error ** 2
 
         return running_sse_val / self.n_val_ratings
