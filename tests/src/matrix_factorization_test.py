@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 
-from src.dl.mf_dataset import MFDataset
+from src.matrix_factorization import MatrixFactorization
 from tests.conftest import rating_mat_nan, rating_mat_zero
 
 
@@ -12,7 +12,7 @@ def test_split(rating_mat_nan, rating_mat_zero, unseen_mode):
     rating_mat = rating_mat_nan if unseen_mode == "nan" else rating_mat_zero
 
     # Act
-    train_mat, val_mat = MFDataset.split(rating_mat, train_ratio, unseen_mode)
+    train_mat, val_mat = MatrixFactorization.split(rating_mat, train_ratio, unseen_mode)
 
     # Assert
     assert train_mat.shape == rating_mat.shape

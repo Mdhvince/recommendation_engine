@@ -1,1 +1,1 @@
-### Matrix Factorization Funk SVD for Recommendation System
+### Matrix Factorization SVD++ for Recommendation System

@@ -32,7 +32,6 @@ class MatrixFactorization:
         self.best_user_factors, self.best_item_factors = None, None
 
 
-
     def init_matrices(self):
         root_dir = Path(__file__).parent.parent
         ratings_file = Path(self.cfg_data.get("data_dirname")) / self.cfg_data.get("ratings_filename")
