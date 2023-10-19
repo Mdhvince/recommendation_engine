@@ -1,10 +1,11 @@
+import json
 import configparser
+import pickle
 from pathlib import Path
 from collections import defaultdict
 
 import torch
 import numpy as np
-
 
 
 class MatrixFactorization:
@@ -32,7 +33,7 @@ class MatrixFactorization:
         self.best_user_factors, self.best_item_factors = None, None
 
 
-    def init_matrices(self):
+    def init_matrices(self) -> (torch.FloatTensor, torch.FloatTensor, torch.FloatTensor):
         root_dir = Path(__file__).parent.parent
         ratings_file = Path(self.cfg_data.get("data_dirname")) / self.cfg_data.get("ratings_filename")
         ratings_mat = MatrixFactorization.load_ratings_matrix(root_dir / ratings_file)
@@ -48,14 +49,14 @@ class MatrixFactorization:
                     torch.tensor(val_mat, dtype=torch.float32, device=self.device)
 
 
-    def init_learnable_factors(self):
+    def init_learnable_factors(self) -> (torch.FloatTensor, torch.FloatTensor):
         user_factors = np.random.rand(self.n_users, self.cfg_train.getint("latent_factors"))
         item_factors = np.random.rand(self.cfg_train.getint("latent_factors"), self.n_items)
         return torch.tensor(user_factors, dtype=torch.float32, device=self.device), \
                     torch.tensor(item_factors, dtype=torch.float32, device=self.device)
 
 
-    def matrices_info(self):
+    def matrices_info(self) -> (int, int, int, int, float):
         n_users, n_items = self.ratings_mat.shape
         seen_data = ~torch.isnan(self.ratings_mat) if self.unseen_mode_nan else self.ratings_mat != 0
         seen_train = ~torch.isnan(self.train_mat) if self.unseen_mode_nan else self.train_mat != 0
@@ -69,7 +70,7 @@ class MatrixFactorization:
         return n_users, n_items, n_ratings_train, n_ratings_val, mean_ratings
 
 
-    def results_generator(self, rating_mat):
+    def results_generator(self, rating_mat: torch.FloatTensor) -> (int, int, torch.FloatTensor, torch.FloatTensor, torch.FloatTensor):
         """
         Generator to iterate over user-item interactions
         """
@@ -83,7 +84,7 @@ class MatrixFactorization:
                 yield user_index, item_index, actual_rating, predicted_rating, error
 
 
-    def predict(self, u_idx, i_idx):
+    def predict(self, u_idx: int, i_idx: int) -> float:
         predicted = torch.dot(self.user_factors[u_idx, :], self.item_factors[:, i_idx])
         bias = self.ratings_avg + self.user_bias[u_idx] + self.item_bias[i_idx]
         predicted += bias
@@ -91,7 +92,7 @@ class MatrixFactorization:
         return predicted
 
 
-    def optimize(self, epoch, user_index, item_index, error):
+    def optimize(self, epoch: int, user_index: int, item_index: int, error: float):
         """
         Update the user and item factors using SGD
         :param epoch:
@@ -115,7 +116,7 @@ class MatrixFactorization:
             self.item_factors[k, item_index] += item_factors_momentum
 
 
-    def train(self, epoch):
+    def train(self, epoch: int):
         """
         Learn the latent factors and biases using SGD
         :param epoch: current epoch
@@ -185,9 +186,9 @@ class MatrixFactorization:
 
     def update_biases(self, user_index, item_index, error):
         self.user_bias[user_index] += self.cfg_train.getfloat("bias_lr") \
-                                    * (error - self.cfg_train.getfloat("bias_reg") * self.user_bias[user_index])
+                                    * (error.item() - self.cfg_train.getfloat("bias_reg") * self.user_bias[user_index])
         self.item_bias[item_index] += self.cfg_train.getfloat("bias_lr") \
-                                    * (error - self.cfg_train.getfloat("bias_reg") * self.item_bias[item_index])
+                                    * (error.item() - self.cfg_train.getfloat("bias_reg") * self.item_bias[item_index])
 
 
     def learning_rate_decay(self):
@@ -198,6 +199,27 @@ class MatrixFactorization:
                  * np.exp(-self.cfg_train.getfloat("decay_rate") * epoch)
             learning_rates.append(lr)
         return learning_rates
+
+
+    def save(self):
+        root_dir = Path(__file__).parent.parent
+        data_inference_dir = root_dir / "data_inference"
+        data_inference_dir.mkdir(parents=True, exist_ok=True)
+        user_factors_path = data_inference_dir / self.cfg_data.get("user_factors_filename")
+        item_factors_path = data_inference_dir / self.cfg_data.get("item_factors_filename")
+        user_bias_path = data_inference_dir / self.cfg_data.get("user_bias_filename")
+        item_bias_path = data_inference_dir / self.cfg_data.get("item_bias_filename")
+
+        torch.save(self.best_user_factors, user_factors_path)
+        torch.save(self.best_item_factors, item_factors_path)
+
+        with open(user_bias_path, "w") as f:
+            json.dump(dict(self.user_bias), f)
+        with open(item_bias_path, "w") as f:
+            json.dump(dict(self.item_bias), f)
+
+        print(f"Saved user and item factors to {user_factors_path} and {item_factors_path}")
+        print(f"Saved user and item biases to {user_bias_path} and {item_bias_path}")
 
 
     @staticmethod
@@ -251,5 +273,6 @@ if __name__ == "__main__":
 
     mf = MatrixFactorization(config)
     mf.learn()
+    mf.save()
 
 
