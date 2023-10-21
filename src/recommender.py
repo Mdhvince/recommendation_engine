@@ -20,7 +20,6 @@ class Recommender:
 
         print(f"\nRunning on {self.device}.\n")
 
-
     def load(self):
         root_dir = Path(__file__).parent.parent
         data_dir = root_dir / "data"
@@ -39,7 +38,6 @@ class Recommender:
         item_bias: Dict = json.load(open(item_bias_path))
 
         return ratings_mat, user_factors_mat, item_factors_mat, user_bias, item_bias
-
 
     def predict(self, u_idx: int, i_idx: int) -> float:
         predicted = torch.dot(self.user_factors[u_idx, :], self.item_factors[:, i_idx])

@@ -9,3 +9,4 @@ venv/
 dl/
 deprecated/
 data_inference/
+*.sqlite
