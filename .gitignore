@@ -10,3 +10,4 @@ dl/
 deprecated/
 data_inference/
 *.sqlite
+config_db.ini
