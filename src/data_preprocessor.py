@@ -3,8 +3,10 @@ import json
 import pickle
 import re
 from pathlib import Path
+from typing import Dict
 
 import pyspark.sql.functions as F
+from pyspark.sql import DataFrame
 from pyspark.ml.feature import StringIndexer
 from pyspark.sql import Window
 from pyspark.sql.types import StringType
@@ -21,8 +23,6 @@ class DataPreprocessor:
         self.split_percentage = 0.2
 
     def preprocess(self):
-        """
-        """
         play_records = F.col("behavior") == F.lit("play")
         played = F.col("hours") > F.lit(0)
         window_user = Window.partitionBy("user_id")
@@ -42,52 +42,44 @@ class DataPreprocessor:
 
         # prepare the data for splitting
         window_spec = Window.partitionBy("user_index")
-        # shuffle the rows of each user
         ratings_df = ratings_df.withColumn("rand", F.rand())
         ratings_df = ratings_df.withColumn("row_num", F.row_number().over(window_spec.orderBy("rand")))
-
         ratings_df = ratings_df.withColumn("max_row_num", F.max("row_num").over(window_spec))
 
-        ratings_df = self.split_spark_dataframe(ratings_df)
+        ratings_df = self.associate_splits(ratings_df)
         return ratings_df
 
-    def split_spark_dataframe(self, ratings_df):
-        ratings_df = (
-            ratings_df
+    def associate_splits(self, df):
+        window_spec = Window.partitionBy("user_index")
+        df = (
+            df
+            .withColumn("rand", F.rand())
+            .withColumn("row_num", F.row_number().over(window_spec.orderBy("rand")))
+            .withColumn("max_row_num", F.max("row_num").over(window_spec))
             .withColumn("n_val", F.ceil(self.split_percentage * F.col("max_row_num")))
             .withColumn("n_train", F.col("max_row_num") - F.col("n_val"))
+            .withColumn("dataset", F.when(F.col("row_num") <= F.col("n_train"), "train").otherwise("val"))
+            .select(F.col("user_index").cast("int"), F.col("game_index").cast("int"), "user_id", "game", "dataset", "rating")
         )
-        ratings_df = ratings_df.withColumn(
-            "dataset", F.when(F.col("row_num") <= F.col("n_train"), "train").otherwise("val")
-        )
-        user_train = ratings_df.filter(F.col("dataset") == "train").select("user_index").distinct().count()
-        user_val = ratings_df.filter(F.col("dataset") == "val").select("user_index").distinct().count()
+        user_train = df.filter(F.col("dataset") == "train").select("user_index").distinct().count()
+        user_val = df.filter(F.col("dataset") == "val").select("user_index").distinct().count()
+
         assert user_train == user_val, "Number of unique users in train and val should be the same"
-
-        return ratings_df
-
-    @staticmethod
-    def save_info(df):
-        df = df.select(
-            F.col("user_index").cast("int"),
-            F.col("game_index").cast("int"),
-            "user_id",
-            "game",
-            "dataset",
-            "rating"
-        )
         msg = "The max index of users should be equal to the number of users"
         assert df.select(F.max("user_index")).collect()[0][0] == df.select("user_index").distinct().count() - 1, msg
         msg = "The max index of items should be equal to the number of items"
         assert df.select(F.max("game_index")).collect()[0][0] == df.select("game_index").distinct().count() - 1, msg
         assert df.columns[-1] == "rating", "The last column should be the rating"
 
+        return df
+
+    @staticmethod
+    def get_interactions_map(df: DataFrame) -> Dict[str, float]:
         result_dict = dict(df.rdd.map(lambda row: (f"{row[:-1]}", row["rating"])).collect())
+        return result_dict
 
-        data_dir = Path(__file__).parent.parent / "data_inference"
-        with open(data_dir / "interactions.pkl", "wb") as f:
-            pickle.dump(result_dict, f)
-
+    @staticmethod
+    def get_stats(df: DataFrame):
         stats = {
             "n_users": df.select("user_index").distinct().count(),
             "n_items": df.select("game_index").distinct().count(),
@@ -95,9 +87,13 @@ class DataPreprocessor:
             "n_train_ratings": df.filter(F.col("dataset") == "train").count(),
             "n_val_ratings": df.filter(F.col("dataset") == "val").count()
         }
+        return stats
 
-        with open(data_dir / "stats.json", "w") as f:
-            json.dump(stats, f)
+    @staticmethod
+    def save_info(df: DataFrame, interactions: Dict[str, float], stats: Dict[str, float]):
+        data_dir = Path(__file__).parent.parent / "data_inference"
+        with open(data_dir / "interactions.pkl", "wb") as f: pickle.dump(interactions, f)
+        with open(data_dir / "stats.json", "w") as f: json.dump(stats, f)
 
     @staticmethod
     @F.udf(returnType=StringType())
@@ -114,12 +110,10 @@ if __name__ == "__main__":
     config_db.read(Path(__file__).parent.parent / "config_db.ini")
 
     dp = DataPreprocessor(config_db)
+
     ratings = dp.preprocess()
-    dp.save_info(ratings)
+    interactions_map = DataPreprocessor.get_interactions_map(ratings)
+    stats = DataPreprocessor.get_stats(ratings)
+    DataPreprocessor.save_info(ratings, interactions_map, stats)
 
     dp.terminate()
-
-    # to submit the script to spark cluster:
-    # - locate where the spark-submit command is on the system `which spark-submit`. So if using AWS EMR type the cmd in
-    #   the Machine terminal.
-    # - run the command `/usr/bin/spark-submit --master yarn /path/to/pyspark_script.py`

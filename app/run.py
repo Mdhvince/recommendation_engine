@@ -8,7 +8,7 @@ from src.recommender import Recommender
 app = Flask(__name__)
 
 config = configparser.ConfigParser(inline_comment_prefixes="#")
-config.read(Path(__file__).parent.parent.parent / "config.ini")
+config.read(Path(__file__).parent.parent / "config.ini")
 recommender = Recommender(config)
 
 
