@@ -221,6 +221,6 @@ if __name__ == "__main__":
 
     mf = MatrixFactorization(config)
     mf.learn()
-    # mf.save()
+    mf.save()
 
 
