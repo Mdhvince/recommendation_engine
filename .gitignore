@@ -11,3 +11,4 @@ deprecated/
 data_inference/
 *.sqlite
 config_db.ini
+dummy_post_request.py

@@ -47,5 +47,6 @@ class UserItemIndexer:
             u_idx = self.user_name_to_idx[user]
             i_idx = self.item_name_to_idx[item]
         except KeyError:
-            raise KeyError(f"User {user} or item {item} not found in the dataset.")
+            print(f"User {user} or item {item} not found in dataset")
+            return None, None
         return u_idx, i_idx

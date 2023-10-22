@@ -3,6 +3,7 @@ import configparser
 from pathlib import Path
 from typing import Dict
 
+import numpy as np
 import torch
 
 from src.user_item_indexer import UserItemIndexer
@@ -42,6 +43,8 @@ class Recommender:
 
     def predict(self, user: str, item: str) -> float:
         u_idx, i_idx = self.ui_indexer(user, item)
+        if u_idx is None or i_idx is None:
+            return -1
         predicted = torch.dot(self.user_factors[u_idx, :], self.item_factors[:, i_idx])
         bias = self.mean_ratings + self.user_bias[str(u_idx)] + self.item_bias[str(i_idx)]
         predicted += bias
