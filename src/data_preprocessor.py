@@ -1,44 +1,20 @@
+import configparser
+import json
 import pickle
 import re
 from pathlib import Path
 
-import pyspark
 import pyspark.sql.functions as F
 from pyspark.ml.feature import StringIndexer
-from pyspark.sql import SparkSession, Window
-from pyspark.sql.dataframe import DataFrame
+from pyspark.sql import Window
 from pyspark.sql.types import StringType
 
-
-class SparkDataframe:
-    def __init__(self):
-        self.driver = "org.sqlite.JDBC"
-        driver_path = "/home/medhyvinceslas/.config/JetBrains/PyCharm2023.2/jdbc-drivers/Xerial SQLiteJDBC/3.43.0/org/xerial/sqlite-jdbc/3.43.0.0/sqlite-jdbc-3.43.0.0.jar"
-        self.jdbc_url = "jdbc:sqlite:/home/medhyvinceslas/Documents/programming/recommendation_engine/identifier.sqlite"
-
-        self.spark = (
-            SparkSession.builder
-            .appName("SteamDataPrep")
-            .config("spark.jars", driver_path)
-            .config("spark.driver.extraClassPath", driver_path)
-            .getOrCreate()  # if already exists, get it
-        )
+from src.spark_dataframe import SparkDataframe
 
 
-    def __call__(self, dbtable: str) -> DataFrame:
-        df = (
-            self.spark.read.format("jdbc")
-            .options(url=self.jdbc_url, dbtable=dbtable)
-            .options(driver=self.driver)
-            .load()
-        )
-        # df = self.spark.sparkContext.parallelize(df.collect()).toDF()
-        return df
-
-
-class DataProcessor:
-    def __init__(self):
-        self.spark_dataframe = SparkDataframe()
+class DataPreprocessor:
+    def __init__(self, config_db):
+        self.spark_dataframe = SparkDataframe(config_db)
         self.steam_games = self.spark_dataframe("steam_games")
         self.max_rating = 10
         self.min_games = 5
@@ -49,13 +25,15 @@ class DataProcessor:
         """
         play_records = F.col("behavior") == F.lit("play")
         played = F.col("hours") > F.lit(0)
-        window_maxh_per_user = Window.partitionBy("user_id")
+        window_user = Window.partitionBy("user_id")
         ratings_df = (
             self.steam_games
             .filter(play_records & played)
             .groupby("user_id", "game").agg(F.sum("hours").alias("hours"))
-            .withColumn("max_hours_of_user", F.max("hours").over(window_maxh_per_user))
+            .withColumn("max_hours_of_user", F.max("hours").over(window_user))
             .withColumn("rating", (F.col("hours") / F.col("max_hours_of_user")) * self.max_rating)
+            .withColumn("n_games", F.count("game").over(window_user))  # count and not distinct because of the groupby
+            .filter(F.col("n_games") >= self.min_games)
         )
         user_indexer = StringIndexer(inputCol="user_id", outputCol="user_index")
         game_indexer = StringIndexer(inputCol="game", outputCol="game_index")
@@ -69,11 +47,9 @@ class DataProcessor:
         ratings_df = ratings_df.withColumn("row_num", F.row_number().over(window_spec.orderBy("rand")))
 
         ratings_df = ratings_df.withColumn("max_row_num", F.max("row_num").over(window_spec))
-        ratings_df = ratings_df.filter(F.col("max_row_num") > self.min_games)  # filter out users with less than 5 games
 
         ratings_df = self.split_spark_dataframe(ratings_df)
         return ratings_df
-
 
     def split_spark_dataframe(self, ratings_df):
         ratings_df = (
@@ -90,10 +66,9 @@ class DataProcessor:
 
         return ratings_df
 
-
     @staticmethod
-    def save_info(ratings_df):
-        ratings_df = ratings_df.select(
+    def save_info(df):
+        df = df.select(
             F.col("user_index").cast("int"),
             F.col("game_index").cast("int"),
             "user_id",
@@ -101,14 +76,28 @@ class DataProcessor:
             "dataset",
             "rating"
         )
-        assert ratings_df.columns[-1] == "rating", "The last column should be the rating"
-        result_dict = dict(ratings_df.rdd.map(lambda row: (f"{row[:-1]}", row["rating"])).collect())
+        msg = "The max index of users should be equal to the number of users"
+        assert df.select(F.max("user_index")).collect()[0][0] == df.select("user_index").distinct().count() - 1, msg
+        msg = "The max index of items should be equal to the number of items"
+        assert df.select(F.max("game_index")).collect()[0][0] == df.select("game_index").distinct().count() - 1, msg
+        assert df.columns[-1] == "rating", "The last column should be the rating"
+
+        result_dict = dict(df.rdd.map(lambda row: (f"{row[:-1]}", row["rating"])).collect())
 
         data_dir = Path(__file__).parent.parent / "data_inference"
         with open(data_dir / "interactions.pkl", "wb") as f:
             pickle.dump(result_dict, f)
 
+        stats = {
+            "n_users": df.select("user_index").distinct().count(),
+            "n_items": df.select("game_index").distinct().count(),
+            "mean_rating": df.select(F.mean("rating")).collect()[0][0],
+            "n_train_ratings": df.filter(F.col("dataset") == "train").count(),
+            "n_val_ratings": df.filter(F.col("dataset") == "val").count()
+        }
 
+        with open(data_dir / "stats.json", "w") as f:
+            json.dump(stats, f)
 
     @staticmethod
     @F.udf(returnType=StringType())
@@ -116,13 +105,15 @@ class DataProcessor:
         text = re.sub(r"[^a-zA-Z0-9]", " ", text.lower())
         return text
 
-
     def terminate(self):
         self.spark_dataframe.spark.stop()
 
 
 if __name__ == "__main__":
-    dp = DataProcessor()
+    config_db = configparser.ConfigParser(inline_comment_prefixes="#")
+    config_db.read(Path(__file__).parent.parent / "config_db.ini")
+
+    dp = DataPreprocessor(config_db)
     ratings = dp.preprocess()
     dp.save_info(ratings)
 
