@@ -7,6 +7,8 @@ from collections import defaultdict
 import torch
 import numpy as np
 
+from src.user_item_indexer import UserItemIndexer
+
 
 class MatrixFactorization:
     def __init__(self, config):
@@ -20,10 +22,9 @@ class MatrixFactorization:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.l2 = self.cfg_train.getfloat("l2_reg")
 
-        self.interactions, self.interactions_train, self.interactions_val, stats = self.load_interactions()
-        self.n_users, self.n_items, self.ratings_avg, self.n_train_ratings, self.n_val_ratings = (
-            stats["n_users"], stats["n_items"], stats["mean_rating"], stats["n_train_ratings"], stats["n_val_ratings"]
-        )
+        ui_indexer = UserItemIndexer(config)
+        self.interactions_train, self.interactions_val = ui_indexer.split()
+        self.n_users, self.n_items, self.ratings_avg, self.n_train_ratings, self.n_val_ratings = self.load_stats()
 
         self.user_factors, self.item_factors = self.init_learnable_factors()
         self.lrs = self.learning_rate_decay()
@@ -40,30 +41,14 @@ class MatrixFactorization:
         return torch.tensor(user_factors, dtype=torch.float32, device=self.device), \
                     torch.tensor(item_factors, dtype=torch.float32, device=self.device)
 
-    def load_interactions(self):
+    def load_stats(self):
         root_dir = Path(__file__).parent.parent
         data_inference_dir = root_dir / "data_inference"
-        interactions_path = data_inference_dir / self.cfg_data.get("interactions_filename")
         stats_path = data_inference_dir / self.cfg_data.get("stats_filename")
-        interactions_train = {}
-        interactions_val = {}
-
-        with open(interactions_path, "rb") as f:
-            interactions = pickle.load(f)
-
-        for key, val in interactions.items():
-            user_index, item_index, _, _, split = eval(key)
-            if split == "train":
-                interactions_train[f"{(user_index, item_index)}"] = val
-            elif split == "val":
-                interactions_val[f"{(user_index, item_index)}"] = val
-            else:
-                raise ValueError(f"split value {split} is invalid")
 
         with open(stats_path, "rb") as f:
             stats = json.load(f)
-
-        return interactions, interactions_train, interactions_val, stats
+        return stats["n_users"], stats["n_items"], stats["mean_rating"], stats["n_train_ratings"], stats["n_val_ratings"]
 
 
     def results_generator(self, interaction_dict):
@@ -221,6 +206,6 @@ if __name__ == "__main__":
 
     mf = MatrixFactorization(config)
     mf.learn()
-    mf.save()
+    # mf.save()
 
 
