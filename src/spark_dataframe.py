@@ -23,7 +23,7 @@ class SparkDataframe:
             .options(driver=self.driver)
             .load()
         )
-        df = self.spark.sparkContext.parallelize(df.collect()).toDF()
-        n_cpus_cores = self.spark.sparkContext.defaultParallelism
-        df = df.repartition(n_cpus_cores)
+        # df = self.spark.sparkContext.parallelize(df.collect()).toDF()
+        # n_cpus_cores = self.spark.sparkContext.defaultParallelism
+        # df = df.repartition(n_cpus_cores)
         return df
