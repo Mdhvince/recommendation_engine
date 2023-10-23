@@ -12,7 +12,7 @@ config.read(Path(__file__).parent.parent / "config.ini")
 recommender = Recommender(config)
 
 
-@app.route("/predict", methods=["POST"])  # endpoint
+@app.route("/post_recommendations", methods=["POST"])  # endpoint
 def predict():
     if request.method == "POST":
         user = request.args.get("user")

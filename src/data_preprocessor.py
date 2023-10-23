@@ -40,23 +40,18 @@ class DataPreprocessor:
         ratings_df = user_indexer.fit(ratings_df).transform(ratings_df)
         ratings_df = game_indexer.fit(ratings_df).transform(ratings_df)
 
-        # prepare the data for splitting
-        window_spec = Window.partitionBy("user_index")
-        ratings_df = ratings_df.withColumn("rand", F.rand())
-        ratings_df = ratings_df.withColumn("row_num", F.row_number().over(window_spec.orderBy("rand")))
-        ratings_df = ratings_df.withColumn("max_row_num", F.max("row_num").over(window_spec))
-
-        ratings_df = self.associate_splits(ratings_df)
+        ratings_df = DataPreprocessor.associate_splits(ratings_df, self.split_percentage)
         return ratings_df
 
-    def associate_splits(self, df):
+    @staticmethod
+    def associate_splits(df, split_percentage):
         window_spec = Window.partitionBy("user_index")
         df = (
             df
             .withColumn("rand", F.rand())
             .withColumn("row_num", F.row_number().over(window_spec.orderBy("rand")))
             .withColumn("max_row_num", F.max("row_num").over(window_spec))
-            .withColumn("n_val", F.ceil(self.split_percentage * F.col("max_row_num")))
+            .withColumn("n_val", F.ceil(split_percentage * F.col("max_row_num")))
             .withColumn("n_train", F.col("max_row_num") - F.col("n_val"))
             .withColumn("dataset", F.when(F.col("row_num") <= F.col("n_train"), "train").otherwise("val"))
             .select(F.col("user_index").cast("int"), F.col("game_index").cast("int"), "user_id", "game", "dataset", "rating")
