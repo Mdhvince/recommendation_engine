@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Dict
 
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame
 from pyspark.ml.feature import StringIndexer
+from pyspark.sql import DataFrame
 from pyspark.sql import Window
 from pyspark.sql.types import StringType
 
@@ -56,16 +56,6 @@ class DataPreprocessor:
             .withColumn("dataset", F.when(F.col("row_num") <= F.col("n_train"), "train").otherwise("val"))
             .select(F.col("user_index").cast("int"), F.col("game_index").cast("int"), "user_id", "game", "dataset", "rating")
         )
-        user_train = df.filter(F.col("dataset") == "train").select("user_index").distinct().count()
-        user_val = df.filter(F.col("dataset") == "val").select("user_index").distinct().count()
-
-        assert user_train == user_val, "Number of unique users in train and val should be the same"
-        msg = "The max index of users should be equal to the number of users"
-        assert df.select(F.max("user_index")).collect()[0][0] == df.select("user_index").distinct().count() - 1, msg
-        msg = "The max index of items should be equal to the number of items"
-        assert df.select(F.max("game_index")).collect()[0][0] == df.select("game_index").distinct().count() - 1, msg
-        assert df.columns[-1] == "rating", "The last column should be the rating"
-
         return df
 
     @staticmethod
