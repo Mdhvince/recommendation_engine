@@ -23,3 +23,20 @@ def test_associate_splits(ratings_df):
     assert df.columns[-1] == "rating", "The last column should be the rating"
 
 
+def test_get_interactions_map(ratings_df):
+    # Arrange
+    split_percentage = 0.2
+    df = DataPreprocessor.associate_splits(ratings_df, split_percentage)
+    # user_index, game_index, user_id, game, dataset, rating
+
+    # Act
+    result_dict = DataPreprocessor.get_interactions_map(df)
+
+    # Assert
+    assert len(result_dict) == 24, "The number of interactions should be 24 (8 users x 3 games)"
+    assert result_dict["(0, 0, '1', 'game1', 'train')"] == 10.0, "The rating should be 10.0"
+    assert len([key for key in result_dict.keys() if eval(key)[4] == "train"]) == 16, "The number of train interactions should be 16 (train percentage = 0.8)"
+    assert len([key for key in result_dict.keys() if eval(key)[4] == "val"]) == 8, "The number of val interactions should be 8 (val percentage = 0.2)"
+
+
+
