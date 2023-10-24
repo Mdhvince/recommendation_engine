@@ -1,3 +1,5 @@
+import math
+
 import pyspark.sql.functions as F
 
 from src.data_preprocessor import DataPreprocessor
@@ -33,9 +35,24 @@ def test_get_interactions_map(ratings_df):
     result_dict = DataPreprocessor.get_interactions_map(df)
 
     # Assert
-    assert len(result_dict) == 24, "The number of interactions should be 24 (8 users x 3 games)"
-    assert len([key for key in result_dict.keys() if eval(key)[4] == "train"]) == 16, "The number of train interactions should be 16 (train percentage = 0.8)"
-    assert len([key for key in result_dict.keys() if eval(key)[4] == "val"]) == 8, "The number of val interactions should be 8 (val percentage = 0.2)"
+    assert len(result_dict) == 24
+    assert len([key for key in result_dict.keys() if eval(key)[4] == "train"]) == 16
+    assert len([key for key in result_dict.keys() if eval(key)[4] == "val"]) == 8
 
+
+def test_get_stats(ratings_df):
+    # Arrange
+    split_percentage = 0.2
+    df = DataPreprocessor.associate_splits(ratings_df, split_percentage)
+
+    # Act
+    stats = DataPreprocessor.get_stats(df)
+
+    # Assert
+    assert stats["n_users"] == 8
+    assert stats["n_items"] == 3
+    assert math.isclose(stats["mean_rating"], 6.56, rel_tol=1e-2)
+    assert stats["n_train_ratings"] == 16
+    assert stats["n_val_ratings"] == 8
 
 
