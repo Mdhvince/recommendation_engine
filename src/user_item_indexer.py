@@ -27,12 +27,12 @@ class UserItemIndexer:
         interactions_train = {}
         interactions_val = {}
 
-        for key, val in self.interactions_dict.items():
+        for key, rating in self.interactions_dict.items():
             user_index, item_index, _, _, split = eval(key)
             if split == "train":
-                interactions_train[f"{(user_index, item_index)}"] = val
+                interactions_train[f"{(user_index, item_index)}"] = rating
             elif split == "val":
-                interactions_val[f"{(user_index, item_index)}"] = val
+                interactions_val[f"{(user_index, item_index)}"] = rating
             else:
                 raise ValueError(f"split value {split} is invalid")
 
