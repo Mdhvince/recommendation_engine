@@ -1,20 +1,21 @@
-import json
 import configparser
-import pickle
-from pathlib import Path
+import json
+import logging
 from collections import defaultdict
+from pathlib import Path
 
-import torch
 import numpy as np
+import torch
 
 from src.user_item_indexer import UserItemIndexer
 
 
-class MatrixFactorization:
+class MFTrainer:
     def __init__(self, config):
-        """
-        :param config: config object
-        """
+
+        logging.basicConfig(filename="mf_trainer.log", level=logging.INFO, format="%(asctime)s %(message)s")
+        self.logger = logging.getLogger(__name__)
+
         self.cfg_data = config["DATA"]
         self.cfg_train = config["TRAINING"]
         self.cfg_train.getint("latent_factors")
@@ -134,9 +135,9 @@ class MatrixFactorization:
 
 
     def log(self, epoch, mse_train, mse_val):
-        print(
+        self.logger.info(
             f"Epoch: {epoch + 1}/{self.cfg_train.getint('num_epochs')} "
-            f"| Train RMSE: {np.sqrt(mse_train):.3f} | Val RMSE: {np.sqrt(mse_val):.3f}"
+            f"| Train RMSE - {np.sqrt(mse_train):.3f} | Val RMSE - {np.sqrt(mse_val):.3f}"
         )
 
 
@@ -204,7 +205,7 @@ if __name__ == "__main__":
     config = configparser.ConfigParser(inline_comment_prefixes="#")
     config.read(Path(__file__).parent.parent / "config.ini")
 
-    mf = MatrixFactorization(config)
+    mf = MFTrainer(config)
     mf.learn()
     # mf.save()
 
