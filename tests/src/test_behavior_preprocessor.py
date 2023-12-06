@@ -2,8 +2,7 @@ import math
 
 import pyspark.sql.functions as F
 
-from src.data_preprocessor import DataPreprocessor
-from tests.conftest import ratings_df
+from src.preprocessing.behavior_preprocessor import BehaviorPreprocessor
 
 
 def test_associate_splits(ratings_df):
@@ -11,7 +10,7 @@ def test_associate_splits(ratings_df):
     split_percentage = 0.2
 
     # Act
-    df = DataPreprocessor.associate_splits(ratings_df, split_percentage)
+    df = BehaviorPreprocessor.associate_splits(ratings_df, split_percentage)
 
     # Assert
     n_user_train = df.filter(F.col("dataset") == "train").select("user_index").distinct().count()
@@ -28,11 +27,11 @@ def test_associate_splits(ratings_df):
 def test_get_interactions_map(ratings_df):
     # Arrange
     split_percentage = 0.2
-    df = DataPreprocessor.associate_splits(ratings_df, split_percentage)
+    df = BehaviorPreprocessor.associate_splits(ratings_df, split_percentage)
     # user_index, game_index, user_id, game, dataset, rating
 
     # Act
-    result_dict = DataPreprocessor.get_interactions_map(df)
+    result_dict = BehaviorPreprocessor.get_interactions_map(df)
 
     # Assert
     assert len(result_dict) == 24
@@ -43,10 +42,10 @@ def test_get_interactions_map(ratings_df):
 def test_get_stats(ratings_df):
     # Arrange
     split_percentage = 0.2
-    df = DataPreprocessor.associate_splits(ratings_df, split_percentage)
+    df = BehaviorPreprocessor.associate_splits(ratings_df, split_percentage)
 
     # Act
-    stats = DataPreprocessor.get_stats(df)
+    stats = BehaviorPreprocessor.get_stats(df)
 
     # Assert
     assert stats["n_users"] == 8

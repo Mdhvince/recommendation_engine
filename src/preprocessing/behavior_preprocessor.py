@@ -11,10 +11,10 @@ from pyspark.sql import DataFrame
 from pyspark.sql import Window
 from pyspark.sql.types import StringType
 
-from src.spark_dataframe import SparkDataframe
+from src.utils.spark_dataframe import SparkDataframe
 
 
-class DataPreprocessor:
+class BehaviorPreprocessor:
     def __init__(self, config_db):
         self.spark_dataframe = SparkDataframe(config_db)
         self.steam_games = self.spark_dataframe("steam_games")
@@ -40,7 +40,7 @@ class DataPreprocessor:
         ratings_df = user_indexer.fit(ratings_df).transform(ratings_df)
         ratings_df = game_indexer.fit(ratings_df).transform(ratings_df)
 
-        ratings_df = DataPreprocessor.associate_splits(ratings_df, self.split_percentage)
+        ratings_df = BehaviorPreprocessor.associate_splits(ratings_df, self.split_percentage)
         return ratings_df
 
     @staticmethod
@@ -94,11 +94,11 @@ if __name__ == "__main__":
     config_db = configparser.ConfigParser(inline_comment_prefixes="#")
     config_db.read(Path(__file__).parent.parent / "config_db.ini")
 
-    dp = DataPreprocessor(config_db)
+    dp = BehaviorPreprocessor(config_db)
 
     ratings = dp.preprocess()
-    interactions_map = DataPreprocessor.get_interactions_map(ratings)
-    stats = DataPreprocessor.get_stats(ratings)
-    DataPreprocessor.save_info(ratings, interactions_map, stats)
+    interactions_map = BehaviorPreprocessor.get_interactions_map(ratings)
+    stats = BehaviorPreprocessor.get_stats(ratings)
+    BehaviorPreprocessor.save_info(ratings, interactions_map, stats)
 
     dp.terminate()

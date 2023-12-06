@@ -1,12 +1,11 @@
-import json
 import configparser
+import json
 from pathlib import Path
 from typing import Dict
 
-import numpy as np
 import torch
 
-from src.user_item_indexer import UserItemIndexer
+from src.utils.user_item_indexer import UserItemIndexer
 
 
 class Recommender:

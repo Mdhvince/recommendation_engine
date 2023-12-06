@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from src.user_item_indexer import UserItemIndexer
+from src.utils.user_item_indexer import UserItemIndexer
 
 
 class MFTrainer:
@@ -18,38 +18,40 @@ class MFTrainer:
 
         self.cfg_data = config["DATA"]
         self.cfg_train = config["TRAINING"]
-        self.cfg_train.getint("latent_factors")
-        self.min_rating, self.max_rating = self.cfg_data.getfloat("min_rating"), self.cfg_data.getfloat("max_rating")
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.l2 = self.cfg_train.getfloat("l2_reg")
 
+        self.N_FACTORS = self.cfg_train.getint("latent_factors")
+        self.DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.L2 = self.cfg_train.getfloat("l2_reg")
+        self.lrs = self.learning_rate_decay()
+
+        # Data for training and validation
         ui_indexer = UserItemIndexer(config)
         self.interactions_train, self.interactions_val = ui_indexer.split()
-        self.n_users, self.n_items, self.ratings_avg, self.n_train_ratings, self.n_val_ratings = self.load_stats()
 
+        stats = self.load_stats()
+        self.N_USERS = stats["n_users"]
+        self.N_ITEMS = stats["n_items"]
+        self.RATING_AVG = stats["mean_rating"]
+        self.N_TRAIN = stats["n_train_ratings"]
+        self.N_VAL = stats["n_val_ratings"]
         self.user_factors, self.item_factors = self.init_learnable_factors()
-        self.lrs = self.learning_rate_decay()
 
         self.nic = 0  # no improvement counter
         self.best_loss = float("Inf")
         self.user_bias = defaultdict(lambda: 0)
         self.item_bias = defaultdict(lambda: 0)
-        self.best_user_factors, self.best_item_factors = None, None
+        self.U, self.V_t = None, None
 
     def init_learnable_factors(self) -> (torch.FloatTensor, torch.FloatTensor):
-        user_factors = np.random.rand(self.n_users, self.cfg_train.getint("latent_factors"))
-        item_factors = np.random.rand(self.cfg_train.getint("latent_factors"), self.n_items)
-        return torch.tensor(user_factors, dtype=torch.float32, device=self.device), \
-                    torch.tensor(item_factors, dtype=torch.float32, device=self.device)
+        user_factors = torch.randn(self.N_USERS, self.N_FACTORS, device=self.DEVICE)
+        item_factors = torch.randn(self.N_FACTORS, self.N_ITEMS, device=self.DEVICE)
+        return user_factors, item_factors
 
     def load_stats(self):
-        root_dir = Path(__file__).parent.parent
-        data_inference_dir = root_dir / "data_inference"
-        stats_path = data_inference_dir / self.cfg_data.get("stats_filename")
-
+        stats_path = Path(__file__).parent.parent / "data_inference" / self.cfg_data.get("stats_filename")
         with open(stats_path, "rb") as f:
             stats = json.load(f)
-        return stats["n_users"], stats["n_items"], stats["mean_rating"], stats["n_train_ratings"], stats["n_val_ratings"]
+        return stats
 
 
     def results_generator(self, interaction_dict):
@@ -65,9 +67,8 @@ class MFTrainer:
 
     def predict(self, u_idx: int, i_idx: int) -> torch.FloatTensor:
         predicted = torch.dot(self.user_factors[u_idx, :], self.item_factors[:, i_idx])
-        bias = self.ratings_avg + self.user_bias[u_idx] + self.item_bias[i_idx]
+        bias = self.RATING_AVG + self.user_bias[u_idx] + self.item_bias[i_idx]
         predicted += bias
-        # predicted = np.clip(predicted, self.min_rating, self.max_rating)
         return predicted
 
 
@@ -84,9 +85,9 @@ class MFTrainer:
         user_factors_momentum = 0
         item_factors_momentum = 0
 
-        for k in range(self.cfg_train.getint("latent_factors")):
-            user_factor_gradient = error * self.item_factors[k, item_index] - self.l2 * self.user_factors[user_index, k]
-            item_factor_gradient = error * self.user_factors[user_index, k] - self.l2 * self.item_factors[k, item_index]
+        for k in range(self.N_FACTORS):
+            user_factor_gradient = error * self.item_factors[k, item_index] - self.L2 * self.user_factors[user_index, k]
+            item_factor_gradient = error * self.user_factors[user_index, k] - self.L2 * self.item_factors[k, item_index]
 
             user_factors_momentum = momentum * user_factors_momentum + self.lrs[epoch] * user_factor_gradient
             item_factors_momentum = momentum * item_factors_momentum + self.lrs[epoch] * item_factor_gradient
@@ -108,7 +109,7 @@ class MFTrainer:
             self.update_biases(user_index, item_index, error)
             self.optimize(epoch, user_index, item_index, error)
 
-        return running_sse_train / self.n_train_ratings
+        return running_sse_train / self.N_TRAIN
 
 
     def evaluate(self):
@@ -120,12 +121,10 @@ class MFTrainer:
         for *_, error in self.results_generator(self.interactions_val):
             running_sse_val += error ** 2
 
-        return running_sse_val / self.n_val_ratings
+        return running_sse_val / self.N_VAL
 
 
     def learn(self):
-        self.best_loss = float("Inf")
-        self.nic = 0
 
         for epoch in range(self.cfg_train.getint("num_epochs")):
             mse_train = self.train(epoch)
@@ -150,8 +149,8 @@ class MFTrainer:
         """
         if mse_val < self.best_loss and epoch > (self.cfg_train.getint("num_epochs") * 0.1):
             self.best_loss = mse_val
-            self.best_user_factors = self.user_factors
-            self.best_item_factors = self.item_factors
+            self.U = self.user_factors
+            self.V_t = self.item_factors
             self.nic = 0  # no improvement counter
         else:
             if epoch > (self.cfg_train.getint("num_epochs") * 0.1):
@@ -162,7 +161,7 @@ class MFTrainer:
         return False
 
 
-    def update_biases(self, user_index, item_index, error):
+    def update_biases(self, user_index: int, item_index: int, error: torch.FloatTensor):
         self.user_bias[user_index] += self.cfg_train.getfloat("bias_lr") \
                                     * (error.item() - self.cfg_train.getfloat("bias_reg") * self.user_bias[user_index])
         self.item_bias[item_index] += self.cfg_train.getfloat("bias_lr") \
@@ -188,8 +187,8 @@ class MFTrainer:
         user_bias_path = data_inference_dir / self.cfg_data.get("user_bias_filename")
         item_bias_path = data_inference_dir / self.cfg_data.get("item_bias_filename")
 
-        torch.save(self.best_user_factors, user_factors_path)
-        torch.save(self.best_item_factors, item_factors_path)
+        torch.save(self.U, user_factors_path)
+        torch.save(self.V_t, item_factors_path)
 
         with open(user_bias_path, "w") as f:
             json.dump(dict(self.user_bias), f)
